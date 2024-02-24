@@ -1,4 +1,5 @@
-from npsem.model import CD
+# from npsem.model import CD
+from model import CD
 from probability import Probability, get_new_probability
 
 # Define exceptions that can occur.
