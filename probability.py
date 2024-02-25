@@ -1,11 +1,12 @@
-import copy
 import re
+import copy
+from itertools import permutations
 
 # Define a probability distribution class
 class Probability:
-    '''Probability distribution class. If recursive is set to True, var and cond are ignored
-    and it becomes a product of probabilities in children. If fraction is set to True, the
-    divisor is enabled.'''
+    '''
+    condition은 get_new_probability로 우선 fraction 형태로 처리되고 가능한 경우 simplify에서 _var|_cond 로 변경됨
+    '''
 
     def __init__(self, var=set(), cond=set(), do=set(), recursive=False, children=set(), sumset=set(), fraction=False,
                  divisor=None, scope: set = set()):
@@ -22,12 +23,13 @@ class Probability:
         if not scope:
             scope = self._var | self._cond
         self._scope = scope
-        
+
+
     def copy(self):
         new_P = copy.deepcopy(self)
         return new_P
 
-    # GetAttributes
+
     @property
     def attributes(self):
         '''Function that shows all attributes of the probability distribution.'''
@@ -80,77 +82,123 @@ class Probability:
         return free
     
 
-    def simplify(self, complete=True, verbose=False):
-        '''Function that simplifies some expressions.'''
-        self.decouple()         # 일단 최대한 children으로 올리기
-        changes = True
-        while (changes):
-            changes = False
-            # 하나의 P에서 sumset과 V의 simplify
-            if not self._recursive:
-                # \sum_{x}P(x, y) = P(y) 로 
+    def simplify(self):
+
+        # for loop 돌면서 children 만드는 경우 children이 1개면 불필요하게 nested 됨
+        # 밖으로 꺼내주고 이미 get_new_probability에서 simplify해서 추가적인 정리 필요 없음        
+        if self._recursive and len(self._children)==1:
+            child = next(iter(self._children))
+            self.__dict__ = child.__dict__      # child의 정보를 self에 복사
+            return
+        
+        # get_new_probability에서 simplify 를 해서 안해도 될 것 같음
+        if self._divisor:
+            self._divisor.simplify()
+        
+        # 한번이라도 simplify가 되었다면 다시 탐색
+        # self._sumset, self._recursive, self._fraction 의 유무에 따라 simplify 방법 달라짐
+        flag = True 
+        while flag:
+            flag = False
+            
+            # sumset도 없고, children도 없고, fraction도 없다면
+            if not self._sumset and not self._recursive and not self._fraction:
+                return 
+
+            # sumset이 있는데, children이 없고, fraction도 없다면
+            # sum_c P(a, c) = P(a)
+            elif self._sumset and not self._recursive and not self._fraction:
                 sum_variables = self._sumset & self._var
                 self._sumset = self._sumset - sum_variables
                 self._var = self._var - sum_variables
+                flag = True
 
-                # 분모가 있는 경우(cond가 있어서)
-                if self._fraction:
-                    # 분모도 쪼개지는게 아니라면 위에서 한것처럼 sumset의 변수 v에서 제거
-                    if not self._divisor._recursive:
-                        sum_variables = self._divisor._sumset & self._divisor._var
-                        self._divisor._sumset = self._divisor._sumset - sum_variables
-                        self._divisor._var = self._divisor._var - sum_variables
-                        # 만약 분모 V가 없다면 분모를 없애버리면 됨
-                        if len(self._divisor._var) == 0:
-                            self._divisor = None
-                            self._fraction = False
+            # children있으면서, fraction 있는 경우
+            elif not self._recursive and self._fraction:
+                
+                # P(x, y) / P() = P(x, y)
+                if not self._divisor._var:
+                    self._divisor = None
+                    self._fraction = False
+                    flag = True
 
-                        # 만약 분모의 condition이 없고 divisor의 V가 분자 V의 부분집합이면 분모 없앨 있음 
-                        # P(x, y) / P(y) = P(x|y)
-                        elif len(self._divisor._cond) == 0 and self._divisor._var.issubset(self._var):
-                            self._var = self._var - self._divisor._var
-                            self._cond = self._cond | self._divisor._var
-                            self._divisor = None
-                            self._fraction = False
 
-            # 다른 P간의 simplify
-            elif complete:
-                simplified = None
-                for prob1 in self._children:
-                    for prob2 in self._children:
-                        #일단 서로 다른 prob이고 모두 하나의 term이라면 
-                        if not prob1._recursive and not prob2._recursive and not prob1 == prob2:
-                            # P(Y|X,Z)P(X|Z) = P(Y,X|Z), P(Y|X)P(X) = P(Y,X)
-                            if prob1._cond == prob2._var | prob2._cond:
-                                simplified = prob2
-                                if verbose: print("Additional simplification")
-                                prob1._var = prob1._var | prob2._var
-                                prob1._cond = prob1._cond - prob2._var
-                                changes = True      # 또 다른 simplify를 위해서 while문 돌아야 함
-                        if simplified is not None:  # 일단 하나 simplify 했으면 넘어감
-                            break
-                    if simplified is not None:      # 일단 하나 simplify 했으면 넘어감
+                # 만약 분모의 condition이 없고 divisor의 V가 분자 V의 부분집합이면 분모 제거
+                # P(x, y) / P(y) = P(x|y)
+                elif not self._divisor._cond and self._divisor._var<=self._var:
+                    self._var = self._var - self._divisor._var
+                    self._cond = self._cond | self._divisor._var
+                    self._divisor = None
+                    self._fraction = False
+                    flag = True
+            
+            # children이 있는 경우 child끼리 합칠 수 있는지 확인
+            elif self._recursive:
+                
+                for prob1, prob2 in permutations(self._children, 2):
+                    
+                    # 모두 children이 없다면
+                    if not prob1._recursive and not prob2._recursive:
+                        
+                        # P(Y|X,Z)P(X|Z) = P(Y,X|Z), P(Y|X)P(X) = P(Y,X)
+                        if prob1._cond == prob2._var | prob2._cond:
+                            removable = prob2
+                            prob1._var = prob1._var | prob2._var
+                            prob1._cond = prob1._cond - prob2._var
+                            self._children -= {removable}   # 합쳐져서 없어진 것 제거 (prob2)
+                            
+                            # 만약 children이 하나가 남으면 recursive False로 하고 올려줌
+                            if len(self._children) == 1:
+                                prob = next(iter(self._children))
+                                self.__dict__ = prob.__dict__
+
+                            flag = True      # 또 다른 simplify를 위해서 while문 돌아야 함
+
+                    if flag:  # 일단 하나 simplify 했으면 넘어감
                         break
                 
-                if simplified is not None:
-                    self._children.remove(simplified)   # 합쳐져서 없어진 것 제거 (prob2)
-                    # 만약 children이 하나가 남으면 그냥 그걸 올리면 됨
-                    if len(self._children) == 1:
-                        (prob,) = self._children
-                        self._sumset = prob._sumset | self._sumset
-                        self._var = prob._var
-                        self._cond = prob._cond
-                        self._recursive = False
-                        self._children = set()
+            # sum_c P(a, c|x, y, z) P(x | a, y)  = P(a | x, y, z) P(x | a, y)
+            # 대신 모든 children이 recursive가 없어야 함. 있는 경우 그 안에 self.sumset에 해당하는 변수가 있을 수 있어 함부로 지울 수 없음
+            if self._sumset and self._recursive and not any(child._recursive for child in self._children):
+                vars, conds = set(), set()
+                for child in self._children:
+                    vars |= child._var
+                    conds |= child._cond
+                
+                for child in self._children:
+                    if removable := (child._var - conds) & self._sumset:
+                        child._var  -= removable
+                        self._sumset -= removable
+                        if not child._var:
+                            self._children -= {child}
+                        flag = True
+                        break
 
 
     def __lt__(self, other):
-        '''Function that enables alphabetical sorting of variables.'''
-        if len(other._var) == 0:
-            return True
-        if len(self._var) == 0:
+        # 1. _cond가 있는 객체는 없는 객체보다 후순위
+        if self._sumset and not other._sumset:
             return False
-        return sorted(self._var)[0].__lt__(sorted(other._var)[0])
+        elif not self._sumset and other._sumset:
+            return True
+        
+        if self._cond and not other._cond:
+            return False
+        elif not self._cond and other._cond:
+            return True
+        
+        # 2. _var의 개수가 클수록 후순위
+        if len(self._var) < len(other._var):
+            return True
+        elif len(self._var) > len(other._var):
+            return False
+        else:
+            # 3. _var 개수가 같다면 _var의 원소 중 가장 작은 것을 포함한 객체를 더 선순위
+            # 4. _var을 정렬할 때는 먼저 알파벳 순서로 정렬하고 알파벳이 같으면 숫자 순으로 정렬. 숫자가 없는 것은 0으로 간주
+            sorted_self_var = sorted(self._var, key=lambda x: (x.strip('0123456789'), int(''.join(filter(str.isdigit, x)) or '0')))
+            sorted_other_var = sorted(other._var, key=lambda x: (x.strip('0123456789'), int(''.join(filter(str.isdigit, x)) or '0')))
+            
+            return sorted_self_var < sorted_other_var
 
 
     @staticmethod # 출력할 때 W1을 w_1로 출력하기 위한 함수
@@ -165,90 +213,66 @@ class Probability:
         
         return modified_set
 
-    def printLatex(self, tab=0, simplify=True, complete_simplification=True, verbose=False):
+
+    def printLatex(self, tab=0):
         '''Function that returns a string in LaTeX syntax of the probability distribution.'''
-        if simplify:
-            self.simplify(complete=complete_simplification, verbose=verbose)
-            if self._recursive:
-                for prob in self._children:
-                    prob.simplify(complete=complete_simplification, verbose=verbose)
+        
         out = ""
         if self._fraction:
             out += '\\left(\\frac{'
-        if len(self._sumset) != 0:
+        
+        if self._sumset:
             if tab == 0:
                 out += '\sum_{' + ', '.join(sorted(self.underscore(self._sumset))).lower() + '}'
             else:
                 out += '\\left(\sum_{' + ', '.join(sorted(self.underscore(self._sumset))).lower() + '}'
+        
         if not self._recursive:
-            if len(self._var) != 0:
-                if (self._do) != 0:
+            if self._var:
+                if self._do:
                     out += 'P_{'+ ', '.join(sorted(self.underscore(self._do))).lower() +'}(' + ', '.join(sorted(self.underscore(self._var))).lower()
                 else:
                     out += 'P(' + ', '.join(sorted(self.underscore(self._var))).lower()
-                if len(self._cond) != 0:
+                if self._cond:
                     out += '|' + ', '.join(sorted(self.underscore(self._cond))).lower()
                 out += ')'
-            else:
+            else:   # useless?
                 out += '1'
         else:
             for prob in sorted(self._children):
-                out += prob.printLatex(tab=tab + 1, simplify=simplify, complete_simplification=complete_simplification,
-                                       verbose=verbose)
-        if len(self._sumset) != 0 and tab != 0:
+                out += prob.printLatex(tab=tab + 1)
+        if self._sumset and tab:
             out += '\\right)'
+        
         if self._fraction:
             out += '}{'
-            out += self._divisor.printLatex(simplify=simplify, complete_simplification=complete_simplification,
-                                            verbose=verbose)
+            out += self._divisor.printLatex()
             out += '}\\right)'
+        
         return out
-
-    # children의 children을 최대한 내 chidren으로 올리는 것...?
-    def decouple(self):
-        '''Recursive function that decouples products of probabilities when possible to ease simplification.'''
-        new_children = set()
-        decouple = False
-        # recursive인 경우에만, 
-        if self._recursive:
-            for p in self._children:
-                # 만약 children도 recursive하고 sumset은 없으면 children의 children도 내 children으로 볼 수 있음
-                if p._recursive and len(p._sumset) == 0:
-                    decouple = True
-                    subdec = p.decouple()
-                    new_children = new_children | subdec._children
-                # 만약 children이 recursive하지 않거나 혹은 sumset이 있으면
-                else:   
-                    new_children = new_children.union({p})
-            if decouple:
-                self._children = new_children
-        return self
 
 
 def get_new_probability(P, var, cond={}):
     '''
-    Function that returns a new probability object P_out with variabes var conditioned on cond from
-    the given probability P.
-
     ID 알고리즘 line 6, 7에서 cond에는 있지만 S'에 속하지 않는 변수는 Freevariables에서 제거해야 함
-
     '''
-    ## 그래프까지 받아서 dsep확인해서 추리는 동작을 넣어볼까? 여기에 넣을지 아니면 probability class에 넣을지 고민해봐야 함
 
     P_out = P.copy()
+
     if len(cond) == 0:
-        if P_out._recursive:
-            P_out._sumset = P_out._sumset | (P.getFreeVariables() - var)
-        else:
-            P_out._var = var
+        P_out._sumset = P_out._sumset | (P.getFreeVariables() - var)
+        P_out.simplify()
     else:
-        # 여기에서 식이 아주 지랄맞아지기 때문에 먼저 분자 정리해야 함
         P_denom = P.copy()
         P_out._sumset = P_out._sumset | (P.getFreeVariables() - (cond | var))
+        P_out.simplify()    # 분자 simplify
+        
         P_out._fraction = True
         P_denom._sumset = P_denom._sumset | (P.getFreeVariables()- cond)
+        P_denom.simplify()  # 분모 simplify
         P_out._divisor = P_denom
-        P_out.simplify(complete=False)  # complete true로 하면 분모랑 형태 달라져서 헷갈려서 그런가?
+
+    P_out.simplify()
 
     return P_out
 
