@@ -1,6 +1,7 @@
 # from npsem.model import CD
 from model import CD
 from probability import Probability, get_new_probability
+from utils import get_prev_orders
 
 # Define exceptions that can occur.
 class HedgeFound(Exception):
@@ -19,19 +20,13 @@ class ThicketFound(Exception):
         super().__init__(self._message)
 
 
-def get_prev_orders(order: list, left: set) -> list:
-    """
-    To preserve topological order in recursive calls.
-    """
-    return [element for element in order if element in left]
-
-
 def myID(Y: set, X: set, G: "CD", P: "Probability" = None, order: list = None, verbose: bool = False, tab: int = 0):
     """
     OUTPUT : Expression in Latex 
     Shpitser, Pearl 2006
     [Identification of Joint Interventional Distributions in Recursive Semi-Markovian Causal Models]
     """
+
     Vs = G.V
     if not order: order = G.causal_order()
     if not P: P = Probability(var=Vs)
@@ -41,11 +36,9 @@ def myID(Y: set, X: set, G: "CD", P: "Probability" = None, order: list = None, v
         if verbose: print(f"[(ID) line 1]")
 
         P_out = P.copy()
-        if P_out._recursive:
-            P_out._sumset = P._sumset | (Vs - Y)
-        else:
-            P_out._var = Y
-        
+        P_out._sumset = P._sumset | (Vs - Y)
+        P_out.simplify()
+
         return P_out
         
     # line 2
@@ -53,11 +46,9 @@ def myID(Y: set, X: set, G: "CD", P: "Probability" = None, order: list = None, v
         if verbose: print(f"[(ID) line 2]\tVs: {Vs}  G.An(Y): {G.An(Y)}")
 
         P_out = P.copy()
-        if P_out._recursive:
-            P_out._sumset = P._sumset | (Vs - G.An(Y))
-        else:
-            P_out._var = G.An(Y)
-        
+        P_out._sumset = P._sumset | (Vs - G.An(Y))
+        P_out.simplify()
+
         return myID(Y, X & G.An(Y), G[G.An(Y)], P_out, order, verbose, tab=tab + 1)
     
     # line 3
@@ -73,8 +64,11 @@ def myID(Y: set, X: set, G: "CD", P: "Probability" = None, order: list = None, v
         probabilities = set()
         for CC in CCs:
             probabilities.add(myID(CC, Vs - CC, G, P, order, verbose, tab=tab + 1))
+        
+        P_out = Probability(recursive=True, children=probabilities, sumset=Vs - (Y | X))
+        P_out.simplify()
 
-        return Probability(recursive=True, children=probabilities, sumset=Vs - (Y | X))
+        return P_out
 
     if len(CCs) == 1:
         S = next(iter(CCs))
@@ -92,10 +86,13 @@ def myID(Y: set, X: set, G: "CD", P: "Probability" = None, order: list = None, v
             for vertex in S:
                 new_order = get_prev_orders(order, Vs)
                 cond = set(new_order[:new_order.index(vertex)])
-                P_out = get_new_probability(P, {vertex}, cond)
-                probabilities.add(P_out)
-            
-            return Probability(recursive=True, children=probabilities, sumset=S - Y)
+                P_i = get_new_probability(P, {vertex}, cond=cond)
+                probabilities.add(P_i)
+
+            P_out = Probability(recursive=True, children=probabilities, sumset=S - Y)
+            P_out.simplify() 
+
+            return P_out
         
         # line 7
         for S_prime in G.c_components:
@@ -105,14 +102,14 @@ def myID(Y: set, X: set, G: "CD", P: "Probability" = None, order: list = None, v
                 probabilities = set()
                 for vertex in S_prime:
                     new_order = get_prev_orders(order, Vs)
-                    prev = set(new_order[:new_order.index(vertex)])
-                    # cond = (prev & S_prime) | (prev - S_prime)        # Equals to cond = prev 
-                    P_out = get_new_probability(P, {vertex}, cond=prev)
-                    probabilities.add(P_out)
+                    cond = set(new_order[:new_order.index(vertex)])
+                    P_i = get_new_probability(P, {vertex}, cond=cond)
+                    probabilities.add(P_i)
 
-                return myID(Y, X & S_prime, G[S_prime], 
-                            Probability(recursive=True, children=probabilities, scope=S_prime), 
-                            order, verbose, tab=tab + 1)
+                P_out = Probability(recursive=True, children=probabilities, scope=S_prime)
+                P_out.simplify()
+
+                return myID(Y, X & S_prime, G[S_prime], P_out, order, verbose, tab=tab + 1)
 
 
 def mygID(Y: set, X: set, Z:set, G: "CD", P: "Probability" = None, verbose: bool = False, tab: int = 0):
@@ -131,11 +128,9 @@ def mygID(Y: set, X: set, Z:set, G: "CD", P: "Probability" = None, verbose: bool
             
             P_out = P.copy()
             P_out._do = (z - Vs) | X
-            if P_out._recursive:
-                P_out._sumset = P._sumset | (Vs - Y)
-            else:
-                P_out._var = Y
-            
+            P_out._sumset = P._sumset | (Vs - Y)
+            P_out.simplify()
+
             return P_out
 
     # line 3
@@ -143,10 +138,8 @@ def mygID(Y: set, X: set, Z:set, G: "CD", P: "Probability" = None, verbose: bool
         if verbose: print(f"[(gID) line 3]\tVs: {Vs}  G.An(Y): {G.An(Y)}")
         
         P_out = P.copy()
-        if P_out._recursive:
-            P_out._sumset = P._sumset | (Vs - G.An(Y))
-        else:
-            P_out._var = G.An(Y)
+        P_out._sumset = P._sumset | (Vs - G.An(Y))
+        P_out.simplify()
 
         return mygID(Y, X & G.An(Y), Z, G[G.An(Y)], P_out, verbose, tab=tab + 1)
     
@@ -164,7 +157,10 @@ def mygID(Y: set, X: set, Z:set, G: "CD", P: "Probability" = None, verbose: bool
         for CC in CCs:
             probabilities.add(mygID(CC, Vs - CC, Z, G, P, verbose, tab=tab+1))
         
-        return Probability(recursive=True, children=probabilities, sumset=Vs - (Y | X))
+        P_out = Probability(recursive=True, children=probabilities, sumset=Vs - (Y | X)) 
+        P_out.simplify()
+
+        return P_out
         
     # line 7
     for z in Z:
@@ -174,6 +170,8 @@ def mygID(Y: set, X: set, Z:set, G: "CD", P: "Probability" = None, verbose: bool
             P_out = P.copy()
             P_out._do = (z - Vs) | (X & z)
             P_out._var = Vs       # useless?
+            P_out.simplify()
+
             result = mysubID(Y, X - z, G[Vs - (z & X)], P_out, verbose=verbose, tab=tab+1) 
             
             if result: return result
@@ -194,10 +192,8 @@ def mysubID(Y: set, X: set, G: "CD", Q: "Probability", order: list = None, verbo
         if verbose: print("[(subID) line 11]")
         
         Q_out = Q.copy()
-        if Q_out._recursive:
-            Q_out._sumset = Q._sumset | (Vs - Y)
-        else:
-            Q_out._var = Y
+        Q_out._sumset = Q._sumset | (Vs - Y)
+        Q_out.simplify()
 
         return Q_out
 
@@ -206,10 +202,8 @@ def mysubID(Y: set, X: set, G: "CD", Q: "Probability", order: list = None, verbo
         if verbose: print(f"[(subID) line 12]\tVs: {Vs}  G.An(Y): {G.An(Y)}")
         
         Q_out = Q.copy()
-        if Q_out._recursive:
-            Q_out._sumset = Q._sumset | (Vs - G.An(Y))
-        else:
-            Q_out._var = G.An(Y)
+        Q_out._sumset = Q._sumset | (Vs - G.An(Y))
+        Q_out.simplify()
 
         return mysubID(Y, X & G.An(Y), G[G.An(Y)], Q_out, order, verbose, tab=tab + 1)
     
@@ -227,10 +221,13 @@ def mysubID(Y: set, X: set, G: "CD", Q: "Probability", order: list = None, verbo
         for vertex in Y:
             new_order = get_prev_orders(order, Vs)
             cond = set(new_order[:new_order.index(vertex)])
-            Q_out = get_new_probability(Q, {vertex}, cond)
-            probabilities.add(Q_out)
-        
-        return Probability(recursive=True, children=probabilities, sumset=S - Y)
+            Q_i = get_new_probability(Q, {vertex}, cond=cond)
+            probabilities.add(Q_i)
+
+        Q_out = Probability(recursive=True, children=probabilities, sumset=S - Y)
+        Q_out.simplify()
+
+        return Q_out
     
     # line 15
     for S_prime in CCs:
@@ -240,23 +237,23 @@ def mysubID(Y: set, X: set, G: "CD", Q: "Probability", order: list = None, verbo
             probabilities = set()
             for vertex in S_prime:
                 new_order = get_prev_orders(order, Vs)
-                prev = set(new_order[:new_order.index(vertex)])
-                Q_out = get_new_probability(Q, {vertex}, cond=prev)
-                probabilities.add(Q_out)
+                cond = set(new_order[:new_order.index(vertex)])
+                Q_i = get_new_probability(Q, {vertex}, cond=cond)
+                probabilities.add(Q_i)
             
-            return mysubID(Y, X & S_prime, G[S_prime], 
-                           Probability(recursive=True, children=probabilities, scope=S_prime), 
-                           order, verbose, tab=tab + 1)
+            Q_out = Probability(recursive=True, children=probabilities, scope=S_prime)
+            Q_out.simplify()
+            
+            return mysubID(Y, X & S_prime, G[S_prime], Q_out, order, verbose, tab=tab + 1)
 
 
 if __name__ == "__main__":
 
-    G = CD({'X', 'W1', 'W2', 'W3', 'W4', 'W5', 'Y'}, 
-                    [('X', 'Y'), ('W1', 'W2'), ('W2', 'X'), ('W4', 'X'), ('W3', 'W4')],
-                    [('W1', 'W3', 'U_W1W3'), ('W2', 'W3', 'U_W2W3'), ('W3', 'W5', 'U_W3W5'), ('W4', 'W5', 'U_W4W5'), ('W1', 'Y', 'U_W1Y'), ('W1', 'X', 'U_W1X')])
+    G = CD({'W1', 'W2', 'X', 'Y1', 'Y2'}, 
+            [('W1', 'X'), ('X', 'Y1'), ('W2', 'Y2')],
+            [('W1', 'W2', 'U_W1W2'), ('W1', 'Y2', 'U_W1Y2'), ('W2', 'X', 'U_W2X'), ('W1', 'Y1', 'U_W1Y1')])
 
-    P = myID(Y={'Y'}, X={'X'}, G=G, verbose=True)
-    print(f"ID: {P.printLatex()}")
+    P = myID(Y={'Y1', 'Y2'}, X={'X'}, G=G, verbose=True)
+    print(P.printLatex())
+
     
-    P1 = mygID(Y={'Y'}, X={'X'}, Z=[set()], G=G, verbose=True)
-    print(f"gID: {P1.printLatex()}")
