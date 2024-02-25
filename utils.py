@@ -8,6 +8,13 @@ from typing import Dict, Iterable, TypeVar, Generator, Tuple, Set, List, FrozenS
 
 T = TypeVar('T')
 
+def get_prev_orders(order: list, left: set) -> list:
+    """
+    To preserve topological order in recursive calls.
+    """
+    return [element for element in order if element in left]
+
+
 def dict_only(a_dict: dict, keys: AbstractSet) -> Dict:
     return {k: a_dict[k] for k in keys if k in a_dict}
 
