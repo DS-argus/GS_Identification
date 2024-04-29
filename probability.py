@@ -10,14 +10,14 @@ class Probability:
 
     def __init__(self, var=set(), cond=set(), do=set(), recursive=False, children=set(), sumset=set(), fraction=False,
                  divisor=None, scope: set = set()):
-        self._var = var
-        self._cond = cond
-        self._do = do
-        self._recursive = recursive
-        self._children = children
-        self._sumset = sumset
-        self._fraction = fraction
-        self._divisor = divisor
+        self._var = var                     # Random variables
+        self._cond = cond                   # Conditions
+        self._do = do                       # Do operator
+        self._recursive = recursive         # Recursive flag
+        self._children = children           # Set of children
+        self._sumset = sumset               # Summation set
+        self._fraction = fraction           # Fraction flag
+        self._divisor = divisor             # Divisor
 
         # 기본적으로 scope를 var과 cond로 설정        
         if not scope:
@@ -38,21 +38,21 @@ class Probability:
         out["cond"] = self._cond
         out["do"] = self._do
         out["recursive"] = self._recursive
+        out["sumset"] = self._sumset
+        out["fraction"] = self._fraction
+        out["scope"] = self._scope
+        
         
         if self._recursive:
             out["children"] = [child.attributes for child in self._children]
         else:
             out["children"] = self._children
         
-        out["sumset"] = self._sumset
-        out["fraction"] = self._fraction
-        
         if self._fraction:
             out["divisor"] = self._divisor.attributes
         else:
             out["divisor"] = self._divisor
 
-        out["scope"] = self._scope
 
         return out
 
@@ -147,10 +147,10 @@ class Probability:
                             prob1._cond = prob1._cond - prob2._var
                             self._children -= {removable}   # 합쳐져서 없어진 것 제거 (prob2)
                             
-                            # 만약 children이 하나가 남으면 recursive False로 하고 올려줌
-                            if len(self._children) == 1:
-                                prob = next(iter(self._children))
-                                self.__dict__ = prob.__dict__
+                            # # 만약 children이 하나가 남으면 recursive False로 하고 올려줌
+                            # if len(self._children) == 1:
+                            #     prob = next(iter(self._children))
+                            #     self.__dict__ = prob.__dict__
 
                             flag = True      # 또 다른 simplify를 위해서 while문 돌아야 함
 
