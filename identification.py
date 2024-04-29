@@ -81,6 +81,7 @@ def myID(Y: set, X: set, G: "CD", P: "Probability" = None, order: list = None, v
         # line 6
         if S in G.c_components:
             if verbose: print(f"[(ID) line 6]\tS: {S}    C(G): {G.c_components}")
+            breakpoint()
 
             probabilities = set()
             for vertex in S:
@@ -218,7 +219,7 @@ def mysubID(Y: set, X: set, G: "CD", Q: "Probability", order: list = None, verbo
         if verbose: print(f"[(subID) line 14]\tS: {S}   C(G): {CCs}")
         
         probabilities = set()
-        for vertex in Y:
+        for vertex in S:
             new_order = get_prev_orders(order, Vs)
             cond = set(new_order[:new_order.index(vertex)])
             Q_i = get_new_probability(Q, {vertex}, cond=cond)
@@ -249,11 +250,10 @@ def mysubID(Y: set, X: set, G: "CD", Q: "Probability", order: list = None, verbo
 
 if __name__ == "__main__":
 
-    G = CD({'W1', 'W2', 'X', 'Y1', 'Y2'}, 
-            [('W1', 'X'), ('X', 'Y1'), ('W2', 'Y2')],
-            [('W1', 'W2', 'U_W1W2'), ('W1', 'Y2', 'U_W1Y2'), ('W2', 'X', 'U_W2X'), ('W1', 'Y1', 'U_W1Y1')])
+    G = CD({'X', 'Z', 'Y'}, 
+        [('X', 'Z'), ('Z', 'Y')],
+        [('Z', 'Y', 'U')])
 
-    P = myID(Y={'Y1', 'Y2'}, X={'X'}, G=G, verbose=True)
-    print(P.printLatex())
-
-    
+    P2 = mygID(Y=set(["Y"]), X=set(["X"]), Z=frozenset([frozenset()]), G=G)
+    print(f"mygID")
+    print(P2.printLatex())
